@@ -23,7 +23,7 @@
 
     .EXAMPLE
     .\CloudFlare.ps1 -Authorize
-    To set your CloudFlare API zone ID, email address, and API key and store them in the registry
+    To set your CloudFlare API email address and API key and store them in the registry
     .EXAMPLE
     .\Cloudflare.ps1
     Will retrieve the logs that accumulated between now and the top of the hour
@@ -42,7 +42,8 @@
 #>
 
 # Setup the environment
-param (
+param 
+(
     [int]$Year,
     [int]$Month,
     [int]$Day,
@@ -171,12 +172,18 @@ function Set-APICredentials {
 }
 
 function Get-IsAPIKeyAuthorized {
+    # Keep looping through this code until the credentials the user provides are accepted by Cloudflare
     do {
         try { 
+            # Assume everything is correct unless an exception is caught
             $success = $true
+
+            # Check the API and see if our credentials are authorized
             $headers = Set-HTTPHeaders
             $response = Invoke-WebRequest -Uri "https://api.cloudflare.com/client/v4/zones/$($zone)/logs/received?start=$([Xml.XmlConvert]::ToString((get-date).AddMinutes(-5),[Xml.XmlDateTimeSerializationMode]::Utc))&end=$([Xml.XmlConvert]::ToString((get-date).AddMinutes(-5),[Xml.XmlDateTimeSerializationMode]::Utc))&fields=ClientASN,ClientCountry,ClientDeviceType,ClientIP,ClientIPClass,ClientRequestUserAgent,ClientSSLCipher,ClientSSLProtocol,ClientSrcPort,ClientRequestURI,OriginResponseStatus,ClientRequestReferer,ClientRequestHost,EdgeStartTimestamp,EdgeResponseStatus&timestamps=rfc3339" -Headers $headers
         }
+        # If an exception is caught, it's likely due to the fact that our credentials are wrong
+        # so prompt the user to re-enter them
         catch { 
             Write-Host "Cloudflare credentials were not accepted."
             Set-APICredentials
@@ -185,22 +192,23 @@ function Get-IsAPIKeyAuthorized {
     } 
     until ($success -eq $true)
 
+    # We've made it this far so we know our credentials are good.  Continue on.
     return $success
 }
 
 function Set-HTTPHeaders {
-    # Get and set the HTTP headers 
+    # Get the currently set values for the zone, email address and token from the registry
     $authEmail = (Get-ItemProperty -Path $registrySettingsPath).Email
     $authToken = (Get-ItemProperty -Path $registrySettingsPath).Token
     Set-Variable -Name "zone" -Value (Get-ItemProperty -Path $registrySettingsPath).Zone -Scope Global
 
+    # Set the HTTP headers appropriately
     $headers = @{}
     $headers.add("X-Auth-Email", $authEmail)
     $headers.add("X-Auth-Key", $authToken)
 
     return $headers
 }
-
 
 # Configuration
 Set-Variable -Name "registryRootPath" -Value "HKCU:\Software\nexxai" -Scope Global
@@ -216,7 +224,6 @@ Set-Variable -Name "registrySettingsPath" -Value "HKCU:\Software\nexxai\Cloudfla
 # '12345',
 # '6789',
 # '9876'
-
 $allowedASNs = {
 }
 
@@ -232,7 +239,6 @@ $allowedASNs = {
 # 'Chrome/60.0',                    <---- Ignore all Chrome v60 entries
 # 'Android',                        <---- Ignore all Android access attempts
 # 'okhttp'                          <---- Ignore all Square payment service access
-
 $allowedUserAgents = {
     'okhttp'
 }
@@ -256,9 +262,9 @@ if (!(Get-ItemProperty -Path $registrySettingsPath -Name Token -ErrorAction Sile
     Set-APICredentials
 }
 
-# Check to make sure if user's API Key is valid
+# Check to make sure if user's API Key is valid and keep asking until Cloudflare accepts the entered data
 do {
-    $checkAuthorization = Get-IsAPIKeyAuthorized
+    [bool]$checkAuthorization = Get-IsAPIKeyAuthorized
 }
 until ($checkAuthorization)
 
