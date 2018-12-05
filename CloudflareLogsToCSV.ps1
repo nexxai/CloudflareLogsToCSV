@@ -23,7 +23,7 @@
 
     .EXAMPLE
     .\CloudFlare.ps1 -Authorize
-    To set your CloudFlare API email address and API key and store them in the registry
+    To set your CloudFlare API zone ID, email address, and API key and store them in the registry
     .EXAMPLE
     .\Cloudflare.ps1
     Will retrieve the logs that accumulated between now and the top of the hour
