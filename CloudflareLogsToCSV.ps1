@@ -404,7 +404,7 @@ for ($i = $hourLoopStart; $i -le $hourLoopEnd; $i++) {
         # Prepare the progress bar values
         $percentComplete = $lineCount / $totalRows * 100
         $elapsedTime = New-TimeSpan -Start $startTime -End $(Get-Date)
-        $totalTime = ($elapsed.TotalSeconds) / ($percentComplete / 100)
+        $totalTime = ($elapsedTime.TotalSeconds) / ($percentComplete / 100)
 
         # ...do some math
         $etaElapsed = (Get-Date) - $startTime
