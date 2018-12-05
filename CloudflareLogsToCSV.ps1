@@ -105,8 +105,8 @@ function Get-IsValidZone {
     }
     $IsValidZone = $false
 
-    # API Keys are given in the format of:
-    # - 37 characters
+    # Zone IDs are given in the format of:
+    # - 32 characters
     # - only hexadecimal (0 to 9, and A to F)
     if ($PassedZone -Match '^([0-9a-fA-F]{32}){1}$') {
         $IsValidZone = $true
