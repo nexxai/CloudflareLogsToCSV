@@ -3,14 +3,11 @@
     This script will interact with the CloudFlare API to retrieve the logs for a given period
     .DESCRIPTION
     CloudFlare's API is primarily time-based so this script will allow a user to request logs for a specific period of time.
-    .PARAMETER Year
-    The 4-digit year
-    .PARAMETER Month
-    The 2-digit month
-    .PARAMETER Day
-    The 2-digit day
-    .PARAMETER Hour
-    The 2-digit hour in 24-hour local time
+    .PARAMETER Authorize
+    Prompt for your CloudFlare Zone ID, email address, and API key
+    .PARAMETER Now
+    Grab the most recent logs between now and the beginning of the current hour
+
     .INPUTS
     None
     .OUTPUTS
@@ -27,30 +24,13 @@
     .EXAMPLE
     .\Cloudflare.ps1
     Will retrieve the logs that accumulated between now and the top of the hour
-    .EXAMPLE
-    .\CloudFlare.ps1 -Hour 17
-    Will retrieve the logs for the entriety of 5PM local time
-    .EXAMPLE
-    .\CloudFlare.ps1 -Hour 17 -Day 1
-    Will retrieve the logs for the entriety of 5PM local time on the first day of the month
-    .EXAMPLE
-    .\CloudFlare.ps1 -Hour 17 -Month 5 -Day 1
-    Will retrieve the logs for the entriety of 5PM local time on the first day of May
-    .EXAMPLE
-    .\CloudFlare.ps1 -Hour 17 -Month 5 -Day 1 -Year 2000
-    Will retrieve the logs for the entriety of 5PM local time on the first day of May 2000
 #>
 
 # Setup the environment
 param 
 (
-    [int]$Year,
-    [int]$Month,
-    [int]$Day,
-    [int]$Hour,
-    [string]$Email,
-    [string]$Token,
-    [switch]$Authorize
+    [switch]$Authorize,
+    [switch]$Now
 )
 
 function Get-IsValidEmailAddress {
@@ -178,9 +158,12 @@ function Get-IsAPIKeyAuthorized {
             # Assume everything is correct unless an exception is caught
             $success = $true
 
+            $nowStart = [Xml.XmlConvert]::ToString((get-date).AddMinutes(-5), [Xml.XmlDateTimeSerializationMode]::Utc)
+            $nowEnd = [Xml.XmlConvert]::ToString((get-date).AddMinutes(-5).AddMilliseconds(1), [Xml.XmlDateTimeSerializationMode]::Utc)
+
             # Check the API and see if our credentials are authorized
             $headers = Set-HTTPHeaders
-            $response = Invoke-WebRequest -Uri "https://api.cloudflare.com/client/v4/zones/$($zone)/logs/received?start=$([Xml.XmlConvert]::ToString((get-date).AddMinutes(-5),[Xml.XmlDateTimeSerializationMode]::Utc))&end=$([Xml.XmlConvert]::ToString((get-date).AddMinutes(-5),[Xml.XmlDateTimeSerializationMode]::Utc))&fields=ClientASN,ClientCountry,ClientDeviceType,ClientIP,ClientIPClass,ClientRequestUserAgent,ClientSSLCipher,ClientSSLProtocol,ClientSrcPort,ClientRequestURI,OriginResponseStatus,ClientRequestReferer,ClientRequestHost,EdgeStartTimestamp,EdgeResponseStatus&timestamps=rfc3339" -Headers $headers
+            $response = Invoke-WebRequest -Uri "https://api.cloudflare.com/client/v4/zones/$($zone)/logs/received?start=$($nowStart)&end=$($nowEnd)&fields=ClientASN,ClientCountry,ClientDeviceType,ClientIP,ClientIPClass,ClientRequestUserAgent,ClientSSLCipher,ClientSSLProtocol,ClientSrcPort,ClientRequestURI,OriginResponseStatus,ClientRequestReferer,ClientRequestHost,EdgeStartTimestamp,EdgeResponseStatus&timestamps=rfc3339" -Headers $headers
         }
         # If an exception is caught, it's likely due to the fact that our credentials are wrong
         # so prompt the user to re-enter them
@@ -264,173 +247,121 @@ if (!(Get-ItemProperty -Path $registrySettingsPath -Name Token -ErrorAction Sile
 
 # Check to make sure if user's API Key is valid and keep asking until Cloudflare accepts the entered data
 do {
-    [bool]$checkAuthorization = Get-IsAPIKeyAuthorized
+    [bool]$userIsAuthorized = Get-IsAPIKeyAuthorized
 }
-until ($checkAuthorization)
+until ($userIsAuthorized)
 
 $CSVFile = ".\logs-$(Get-Date -Format yyy-MM-dd-hhmmss).csv"
 
-# No year was given; use the current year in 4-digit format
-if(!$year) {
-    $year = (Get-Date).year.ToString("0000")
-}
-
-# No month was given; use the current month in 2-digit format
-if (!$month) {
-    $month = (Get-Date).month.ToString("00")
-}
-
-# No day was given; use the current day in 2-digit format
-if (!$day) {
-    $day = (Get-Date).day.ToString("00")
-}
-
-# If the user specified an hour in the -Hour parameter
-if ($hour) {
-    # Start building the query string parameters
-    $hourLoopStart = $hour
-    $hourLoopEnd = $hour
-    # UTC gives us -7 for example, but we need to invert it (add 7 hours)
-    $hour = $hour + ((Get-TimeZone).BaseUTCOffset.TotalHours * -1)
-
-    # If we're specifically looking for the current hour in the current day
-    if ($hour -eq (Get-Date).ToUniversalTime().hour -And $day -eq (Get-Date).day) {
-        # Cloudflare doesn't publish logs for 1 minute so start that far back
-        $minuteEnd = (Get-Date).AddMinutes(-2).minute.ToString("00")
-
-        # The script was started in the first 1 minute of the hour; so just get all of last hour
-        if ($minuteEnd -lt 0) {
-            $hour -= 1
-            Write-Host "Minute wrap-around"
-            $hourLoopStart = $hour - 1
-            $hourLoopEnd = $hour - 1
-        }
-
-    # We're looking at the current day, but not the current hour, so we don't need to worry about going back 5 minutes
-    } else {
-        $minuteEnd = "59"
-    }
-# The user did not specify an hour in the -Hour parameter; only the day
+if ($Now) {
+    # Cloudflare only offers logs more than 1 minute old; request 1 minutes and 5 seconds ago to account for clock shift
+    $start = (Get-Date -Hour (Get-Date).Hour -Minute 0 -Second 0 -Millisecond 0)
+    $end = (Get-Date -Millisecond 0).AddMinutes(-1).AddSeconds(-5)
 } else {
-    if ($day -eq (Get-Date).day) {
-        # Cloudflare doesn't publish logs for 1 minute so start that far back
-        $minuteEnd = (Get-Date).AddMinutes(-2).minute.ToString("00")
-
-        # The script was started in the first 1 minute of the hour; so just get all of last hour
-        if ($minuteEnd -lt 0) {
-            $hourLoopStart = $hour - 1
-            $hourLoopEnd = $hour - 1
+    Write-Host
+    Write-Host "Cloudflare only allows downloading 1 hour of logs at a time"
+    Write-Host "Enter the date and time of when you want the logs to start"
+    Write-Host "For example, if you want the logs from December 25 between 1PM and 2PM,"
+    Write-Host "enter something like 'December 25, 1pm'"
+    Write-Host
+    Write-Host "NOTE: Date entered will automatically be converted to UTC"
+    Write-Host
+    do {
+        $start = Read-Host "Start Date/Time"
+        $start = (Get-Date -Date $start)
+        if ($start -gt (Get-Date)) {
+            Write-Host "Date must be in the past.  Please enter a valid date."
         }
-
-        $hour = (Get-Date).ToUniversalTime().hour.ToString("00")
-
-        # We're looking at the current day, but not the current hour, so we don't need to worry about going back 5 minutes
-    }
-    else {
-        $hourLoopStart = 0
-        $hourLoopEnd = 23
-        $minuteEnd = "59"
-    }
+    } until ($start -lt (Get-Date))   
+    $end = $start.AddHours(1)
 }
+$startDate = [Xml.XmlConvert]::ToString($start, [Xml.XmlDateTimeSerializationMode]::Utc)
+$endDate = [Xml.XmlConvert]::ToString($end, [Xml.XmlDateTimeSerializationMode]::Utc)
 
-# Make sure the date is left padded to contain exactly 2 digits
-$date = $day.ToString("00")
+# Starting the actual work
+Write-Host "Obtaining logs.  Please wait."
 
 # Create the column headers
 $firstLine = "Timestamp,ASN,IP,IP Class,Country,Device Type,User Agent,SSL Cipher,SSL Protocol,Source Port,Edge Status Code,Origin Status Code,Referer,Host,Request URI"
 $firstLine | Add-Content -Path $CSVFile
 
-# Loop through each of the hours throughout the day
-for ($i = $hourLoopStart; $i -le $hourLoopEnd; $i++) {
-    if ($hour) {
-        $getHour = $hour.ToString("00")
-    } else {
-        $getHour = $i
-    }
+# Enforce TLS1.2 (Cloudflare requires this)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-    # Log to the screen so we know where we are in the process
-    Write-Host "Log Range: $($year)-$($month)-$($date)T$($getHour):00:00Z - $($year)-$($month)-$($date)T$($getHour):$($minuteEnd):59Z"
+# Grab the respective hour from the API
+$headers = Set-HTTPHeaders
+$response = Invoke-WebRequest -Uri "https://api.cloudflare.com/client/v4/zones/$($zone)/logs/received?start=$($startDate)&end=$($endDate)&fields=ClientASN,ClientCountry,ClientDeviceType,ClientIP,ClientIPClass,ClientRequestUserAgent,ClientSSLCipher,ClientSSLProtocol,ClientSrcPort,ClientRequestURI,OriginResponseStatus,ClientRequestReferer,ClientRequestHost,EdgeStartTimestamp,EdgeResponseStatus&timestamps=rfc3339" -Headers $headers
+
+# Take the big blob of data and format it into single lines
+$linePerEntry = ($response.content -Split '[\r\n]')
+
+# Debug info 
+$totalRows = $linePerEntry.count
+Write-Host "$($totalRows) rows received"
+$lineCount = 0
+$startTime = Get-Date
+
+foreach ($line in $linePerEntry) {
+    # Convert the given line from JSON to CSV-format
+    $CSVData = $line | ConvertFrom-Json
+
+    # Get the ASN from the line for comparison
+    $ClientASN = $CSVData.ClientASN
     
-    Write-Host "URL: https://api.cloudflare.com/client/v4/zones/$($zone)/logs/received?start=$($year)-$($month)-$($date)T$($getHour):00:00Z&end=$($year)-$($month)-$($date)T$($getHour):$($minuteEnd):59Z&fields=ClientASN,ClientCountry,ClientDeviceType,ClientIP,ClientIPClass,ClientRequestUserAgent,ClientSSLCipher,ClientSSLProtocol,ClientSrcPort,ClientRequestURI,OriginResponseStatus,ClientRequestReferer,ClientRequestHost,EdgeStartTimestamp,EdgeResponseStatus&timestamps=rfc3339"
+    # Remove any commas from the user-agent as most CSV readers (*glares at MS Excel*)
+    # see the comma and immediately stop processing the rest of the entry as a single
+    # field entry, even if wrapped in quotation marks.
+    $ClientRequestUserAgent = $CSVData.ClientRequestUserAgent -Replace ',', ''
 
-    # Enforce TLS1.2 (Cloudflare requires this)
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    # Ignore any of the ASNs and/or User-Agents that we defined to ignore above
+    if ($allowedASNs -NotContains $ClientASN -And $ClientRequestUserAgent -NotContains $allowedUserAgents) {
+        # Get rid of any commas which will causes incorrect columning in a CSV
+        $ClientIP = $CSVData.ClientIP -Replace ',', ''
+        $ClientIPClass = $CSVData.ClientIPClass -Replace ',', ''
+        $ClientCountry = $CSVData.ClientCountry -Replace ',', ''
+        $ClientDeviceType = $CSVData.ClientDeviceType -Replace ',', ''
+        $ClientSSLCipher = $CSVData.ClientSSLCipher -Replace ',', ''
+        $ClientSSLProtocol = $CSVData.ClientSSLProtocol -Replace ',', ''
+        $ClientSrcPort = $CSVData.ClientSrcPort -Replace ',', ''
+        $ClientRequestURI = $CSVData.ClientRequestURI -Replace ',', ''
+        $OriginResponseStatus = $CSVData.OriginResponseStatus -Replace ',', ''
+        $ClientRequestReferer = $CSVData.ClientRequestReferer -Replace ',', ''
+        $ClientRequestHost = $CSVData.ClientRequestHost -Replace ',', ''
+        $EdgeStartTimestamp = $CSVData.EdgeStartTimestamp -Replace ',', ''
+        $EdgeResponseStatus = $CSVData.EdgeResponseStatus -Replace ',', ''
+    
+        # Define what a new line looks like by setting the column headers
+        $newLine = "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14}" -f $EdgeStartTimestamp, $ClientASN, $ClientIP, $ClientIPClass, $ClientCountry, $ClientDeviceType, $ClientRequestUserAgent, $ClientSSLCipher, $ClientSSLProtocol, $ClientSrcPort, $EdgeResponseStatus, $OriginResponseStatus, $ClientRequestReferer, $ClientRequestHost, $ClientRequestURI
+    
+        # Write the line to the file
+        $newLine | Add-Content -Path $CSVFile
 
-    # Grab the respective hour from the API
-    $headers = Set-HTTPHeaders
-    $response = Invoke-WebRequest -Uri "https://api.cloudflare.com/client/v4/zones/$($zone)/logs/received?start=$($year)-$($month)-$($date)T$($getHour):00:00Z&end=$($year)-$($month)-$($date)T$($getHour):$($minuteEnd):59Z&fields=ClientASN,ClientCountry,ClientDeviceType,ClientIP,ClientIPClass,ClientRequestUserAgent,ClientSSLCipher,ClientSSLProtocol,ClientSrcPort,ClientRequestURI,OriginResponseStatus,ClientRequestReferer,ClientRequestHost,EdgeStartTimestamp,EdgeResponseStatus&timestamps=rfc3339" -Headers $headers
+        $lineCount++
+    }  
 
-    # Take the big blob of data and format it into single lines
-    $linePerEntry = ($response.content -Split '[\r\n]')
+    # Prepare the progress bar values
+    $percentComplete = $lineCount / $totalRows * 100
+    $elapsedTime = New-TimeSpan -Start $startTime -End $(Get-Date)
+    $totalTime = ($elapsedTime.TotalSeconds) / ($percentComplete / 100)
 
-    # Debug info 
-    $totalRows = $linePerEntry.count
-    Write-Host "$($totalRows) rows received"
-    $lineCount = 0
-    $startTime = Get-Date
+    # ...do some math
+    $etaElapsed = (Get-Date) - $startTime
+    $etaSeconds = New-TimeSpan -Seconds ($totalTime - $etaElapsed.TotalSeconds)
+    
+    # ...format the strings
+    $ETA = "{0:hh}h{0:mm}m{0:ss}s" -f $etaSeconds
+    $elapsed = "{0:hh}h{0:mm}m{0:ss}s" -f $elapsedTime
+    $processedPercent = [Math]::Round($percentComplete, 2)
 
-    foreach ($line in $linePerEntry) {
-        # Convert the given line from JSON to CSV-format
-        $CSVData = $line | ConvertFrom-Json
-
-        # Get the ASN from the line for comparison
-        $ClientASN = $CSVData.ClientASN
-        
-        # Remove any commas from the user-agent as most CSV readers (*glares at MS Excel*)
-        # see the comma and immediately stop processing the rest of the entry as a single
-        # field entry, even if wrapped in quotation marks.
-        $ClientRequestUserAgent = $CSVData.ClientRequestUserAgent -Replace ',', ''
-
-        # Ignore any of the ASNs and/or User-Agents that we defined to ignore above
-        if ($allowedASNs -NotContains $ClientASN -And $ClientRequestUserAgent -NotContains $allowedUserAgents) {
-            # Get rid of any commas which will causes incorrect columning in a CSV
-            $ClientIP = $CSVData.ClientIP -Replace ',', ''
-            $ClientIPClass = $CSVData.ClientIPClass -Replace ',', ''
-            $ClientCountry = $CSVData.ClientCountry -Replace ',', ''
-            $ClientDeviceType = $CSVData.ClientDeviceType -Replace ',', ''
-            $ClientSSLCipher = $CSVData.ClientSSLCipher -Replace ',', ''
-            $ClientSSLProtocol = $CSVData.ClientSSLProtocol -Replace ',', ''
-            $ClientSrcPort = $CSVData.ClientSrcPort -Replace ',', ''
-            $ClientRequestURI = $CSVData.ClientRequestURI -Replace ',', ''
-            $OriginResponseStatus = $CSVData.OriginResponseStatus -Replace ',', ''
-            $ClientRequestReferer = $CSVData.ClientRequestReferer -Replace ',', ''
-            $ClientRequestHost = $CSVData.ClientRequestHost -Replace ',', ''
-            $EdgeStartTimestamp = $CSVData.EdgeStartTimestamp -Replace ',', ''
-            $EdgeResponseStatus = $CSVData.EdgeResponseStatus -Replace ',', ''
-        
-            # Define what a new line looks like by setting the column headers
-            $newLine = "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14}" -f $EdgeStartTimestamp, $ClientASN, $ClientIP, $ClientIPClass, $ClientCountry, $ClientDeviceType, $ClientRequestUserAgent, $ClientSSLCipher, $ClientSSLProtocol, $ClientSrcPort, $EdgeResponseStatus, $OriginResponseStatus, $ClientRequestReferer, $ClientRequestHost, $ClientRequestURI
-        
-            # Write the line to the file
-            $newLine | Add-Content -Path $CSVFile
-
-            $lineCount++
-        }  
-
-        # Prepare the progress bar values
-        $percentComplete = $lineCount / $totalRows * 100
-        $elapsedTime = New-TimeSpan -Start $startTime -End $(Get-Date)
-        $totalTime = ($elapsedTime.TotalSeconds) / ($percentComplete / 100)
-
-        # ...do some math
-        $etaElapsed = (Get-Date) - $startTime
-        $etaSeconds = New-TimeSpan -Seconds ($totalTime - $etaElapsed.TotalSeconds)
-        
-        # ...format the strings
-        $ETA = "{0:hh}h{0:mm}m{0:ss}s" -f $etaSeconds
-        $elapsed = "{0:hh}h{0:mm}m{0:ss}s" -f $elapsedTime
-        $processedPercent = [Math]::Round($percentComplete, 2)
-
-        # Until we've passed the first second, we'll get a divide by 0 error unless we just divide by 1
-        if ($elapsedTime.Seconds -gt 0) {
-            $rps = [Math]::Round($lineCount / ($elapsedTime.Seconds), 0)
-        } else {
-            $rps = [Math]::Round($lineCount / 1, 0)
-        }
-        
-        # ...and now update the progress bar
-        Write-Progress -Activity "Processing logs" -status "$($lineCount) lines processed ($($processedPercent)% / $($rps) rows per second) // Elapsed: $($elapsed) // ETA: $($ETA)" -percentComplete ($percentComplete)
+    # Until we've passed the first second, we'll get a divide by 0 error unless we just divide by 1
+    if ($elapsedTime.Seconds -gt 0) {
+        $rps = [Math]::Round($lineCount / ($elapsedTime.Seconds), 0)
+    } else {
+        $rps = [Math]::Round($lineCount / 1, 0)
     }
+    
+    # ...and now update the progress bar
+    Write-Progress -Activity "Processing logs" -status "$($lineCount) lines processed ($($processedPercent)% / $($rps) rows per second) // Elapsed: $($elapsed) // ETA: $($ETA)" -percentComplete ($percentComplete)
 }
 
 Write-Host "Complete."
