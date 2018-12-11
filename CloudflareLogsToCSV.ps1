@@ -268,15 +268,16 @@ if ($Now) {
     Write-Host
     do {
         $start = Read-Host "Start Date/Time"
-        $start = (Get-Date -Date $start)
+        $start = (Get-Date -Date "$($start)")
         if ($start -gt (Get-Date)) {
             Write-Host "Date must be in the past.  Please enter a valid date."
         }
     } until ($start -lt (Get-Date))   
     $end = $start.AddHours(1)
 }
-$startDate = [Xml.XmlConvert]::ToString($start, [Xml.XmlDateTimeSerializationMode]::Utc)
-$endDate = [Xml.XmlConvert]::ToString($end, [Xml.XmlDateTimeSerializationMode]::Utc)
+
+$startDate = [Xml.XmlConvert]::ToString($start.ToUniversalTime(), [Xml.XmlDateTimeSerializationMode]::Utc)
+$endDate = [Xml.XmlConvert]::ToString($end.ToUniversalTime(), [Xml.XmlDateTimeSerializationMode]::Utc)
 
 # Starting the actual work
 Write-Host "Obtaining logs.  Please wait."
