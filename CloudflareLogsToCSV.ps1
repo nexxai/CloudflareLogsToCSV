@@ -19,17 +19,24 @@
     Purpose/Change: Initial script development
 
     .EXAMPLE
-    .\CloudFlare.ps1 -Authorize
+    .\CloudFlareLogsToCSV.ps1 -Authorize
     To set your CloudFlare API zone ID, email address and API key and store them in the registry
     .EXAMPLE
-    .\Cloudflare.ps1
+    .\CloudflareLogsToCSV.ps1
+    Will prompt you for the hour that you wish to retrieve logs from
+    .EXAMPLE
+    .\CloudflareLogsToCSV.ps1 -Now
     Will retrieve the logs that accumulated between now and the top of the hour
+    .EXAMPLE
+    .\CloudflareLogsToCSV.ps1 -Last10
+    Will retrieve the logs that accumulated in the last 10 minutes
 #>
 
 # Setup the environment
 param 
 (
     [switch]$Authorize,
+    [switch]$Last10,
     [switch]$Now
 )
 
@@ -256,6 +263,9 @@ $CSVFile = ".\logs-$(Get-Date -Format yyy-MM-dd-hhmmss).csv"
 if ($Now) {
     # Cloudflare only offers logs more than 1 minute old; request 1 minutes and 5 seconds ago to account for clock shift
     $start = (Get-Date -Hour (Get-Date).Hour -Minute 0 -Second 0 -Millisecond 0)
+    $end = (Get-Date -Millisecond 0).AddMinutes(-1).AddSeconds(-5)
+} elseif ($Last10) {
+    $start = (Get-Date).AddMinutes(-10)
     $end = (Get-Date -Millisecond 0).AddMinutes(-1).AddSeconds(-5)
 } else {
     Write-Host
