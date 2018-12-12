@@ -170,7 +170,7 @@ function Get-IsAPIKeyAuthorized {
             $success = $true
 
             $nowStart = [Xml.XmlConvert]::ToString((get-date).AddMinutes(-5), [Xml.XmlDateTimeSerializationMode]::Utc)
-            $nowEnd = [Xml.XmlConvert]::ToString((get-date).AddMinutes(-5).AddMilliseconds(1), [Xml.XmlDateTimeSerializationMode]::Utc)
+            $nowEnd = [Xml.XmlConvert]::ToString((get-date).AddMinutes(-5).AddMilliseconds(10), [Xml.XmlDateTimeSerializationMode]::Utc)
 
             # Check the API and see if our credentials are authorized
             $headers = Set-HTTPHeaders
@@ -300,7 +300,7 @@ $endDate = [Xml.XmlConvert]::ToString($end.ToUniversalTime(), [Xml.XmlDateTimeSe
 Write-Host "Obtaining logs.  Please wait."
 
 # Create the column headers
-$firstLine = "Timestamp,ASN,IP,IP Class,Country,Device Type,User Agent,SSL Cipher,SSL Protocol,Source Port,Edge Status Code,Origin Status Code,Referer,Host,Request URI,RayID"
+$firstLine = "Timestamp,IP,Country,Device Type,User Agent,SSL Cipher,SSL Protocol,Source Port,Edge Status Code,Origin Status Code,Referer,Host,Request URI,RayID,EdgeRateLimitID,WAFRuleID,CacheCacheStatus"
 $firstLine | Add-Content -Path $CSVFile
 
 # Enforce TLS1.2 (Cloudflare requires this)
@@ -308,7 +308,7 @@ $firstLine | Add-Content -Path $CSVFile
 
 # Grab the respective hour from the API
 $headers = Set-HTTPHeaders
-$response = Invoke-WebRequest -Uri "https://api.cloudflare.com/client/v4/zones/$($zone)/logs/received?start=$($startDate)&end=$($endDate)&fields=ClientASN,ClientCountry,ClientDeviceType,ClientIP,ClientIPClass,ClientRequestUserAgent,ClientSSLCipher,ClientSSLProtocol,ClientSrcPort,ClientRequestURI,OriginResponseStatus,ClientRequestReferer,ClientRequestHost,EdgeStartTimestamp,EdgeResponseStatus,RayID&timestamps=rfc3339" -Headers $headers
+$response = Invoke-WebRequest -Uri "https://api.cloudflare.com/client/v4/zones/$($zone)/logs/received?start=$($startDate)&end=$($endDate)&fields=ClientASN,ClientCountry,ClientDeviceType,ClientIP,ClientRequestUserAgent,ClientSSLCipher,ClientSSLProtocol,ClientSrcPort,ClientRequestURI,OriginResponseStatus,ClientRequestReferer,ClientRequestHost,EdgeStartTimestamp,EdgeResponseStatus,RayID,EdgeRateLimitID,WAFRuleID,CacheCacheStatus&timestamps=rfc3339" -Headers $headers
 
 # Take the big blob of data and format it into single lines
 $linePerEntry = ($response.content -Split '[\r\n]')
@@ -335,7 +335,6 @@ foreach ($line in $linePerEntry) {
     if ($allowedASNs -NotContains $ClientASN -And $ClientRequestUserAgent -NotContains $allowedUserAgents) {
         # Get rid of any commas which will causes incorrect columning in a CSV
         $ClientIP = $CSVData.ClientIP
-        $ClientIPClass = $CSVData.ClientIPClass
         $ClientCountry = $CSVData.ClientCountry
         $ClientDeviceType = $CSVData.ClientDeviceType -Replace ',', ''
         $ClientSSLCipher = $CSVData.ClientSSLCipher
@@ -348,9 +347,11 @@ foreach ($line in $linePerEntry) {
         $EdgeStartTimestamp = $CSVData.EdgeStartTimestamp
         $EdgeResponseStatus = $CSVData.EdgeResponseStatus
         $RayID = $CSVData.RayID
-    
+        $EdgeRateLimitID = $CSVData.EdgeRateLimitID
+        $WAFRuleID = $CSVData.WAFRuleID
+        $CacheCacheStatus = $CSVData.CacheCacheStatus    
         # Define what a new line looks like by setting the column headers
-        $newLine = "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15}" -f $EdgeStartTimestamp, $ClientASN, $ClientIP, $ClientIPClass, $ClientCountry, $ClientDeviceType, $ClientRequestUserAgent, $ClientSSLCipher, $ClientSSLProtocol, $ClientSrcPort, $EdgeResponseStatus, $OriginResponseStatus, $ClientRequestReferer, $ClientRequestHost, $ClientRequestURI, $RayID
+        $newLine = "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15},{16}" -f $EdgeStartTimestamp, $ClientIP, $ClientCountry, $ClientDeviceType, $ClientRequestUserAgent, $ClientSSLCipher, $ClientSSLProtocol, $ClientSrcPort, $EdgeResponseStatus, $OriginResponseStatus, $ClientRequestReferer, $ClientRequestHost, $ClientRequestURI, $RayID, $EdgeRateLimitID, $WAFRuleID, $CacheCacheStatus
     
         # Write the line to the file
         $newLine | Add-Content -Path $CSVFile
