@@ -28,6 +28,9 @@
     .\CloudflareLogsToCSV.ps1 -Now
     Will retrieve the logs that accumulated between now and the top of the hour
     .EXAMPLE
+    .\CloudflareLogsToCSV.ps1 -Last5
+    Will retrieve the logs that accumulated in the last 5 minutes
+    .EXAMPLE
     .\CloudflareLogsToCSV.ps1 -Last10
     Will retrieve the logs that accumulated in the last 10 minutes
 #>
@@ -37,6 +40,7 @@ param
 (
     [switch]$Authorize,
     [switch]$Last10,
+    [switch]$Last5,
     [switch]$Now
 )
 
@@ -170,7 +174,7 @@ function Get-IsAPIKeyAuthorized {
 
             # Check the API and see if our credentials are authorized
             $headers = Set-HTTPHeaders
-            $response = Invoke-WebRequest -Uri "https://api.cloudflare.com/client/v4/zones/$($zone)/logs/received?start=$($nowStart)&end=$($nowEnd)&fields=ClientASN,ClientCountry,ClientDeviceType,ClientIP,ClientIPClass,ClientRequestUserAgent,ClientSSLCipher,ClientSSLProtocol,ClientSrcPort,ClientRequestURI,OriginResponseStatus,ClientRequestReferer,ClientRequestHost,EdgeStartTimestamp,EdgeResponseStatus&timestamps=rfc3339" -Headers $headers
+            $response = Invoke-WebRequest -Uri "https://api.cloudflare.com/client/v4/zones/$($zone)/logs/received?start=$($nowStart)&end=$($nowEnd)" -Headers $headers
         }
         # If an exception is caught, it's likely due to the fact that our credentials are wrong
         # so prompt the user to re-enter them
@@ -267,6 +271,9 @@ if ($Now) {
 } elseif ($Last10) {
     $start = (Get-Date).AddMinutes(-10)
     $end = (Get-Date -Millisecond 0).AddMinutes(-1).AddSeconds(-5)
+} elseif ($Last5) {
+    $start = (Get-Date).AddMinutes(-5)
+    $end = (Get-Date -Millisecond 0).AddMinutes(-1).AddSeconds(-5)
 } else {
     Write-Host
     Write-Host "Cloudflare only allows downloading 1 hour of logs at a time"
@@ -293,7 +300,7 @@ $endDate = [Xml.XmlConvert]::ToString($end.ToUniversalTime(), [Xml.XmlDateTimeSe
 Write-Host "Obtaining logs.  Please wait."
 
 # Create the column headers
-$firstLine = "Timestamp,ASN,IP,IP Class,Country,Device Type,User Agent,SSL Cipher,SSL Protocol,Source Port,Edge Status Code,Origin Status Code,Referer,Host,Request URI"
+$firstLine = "Timestamp,ASN,IP,IP Class,Country,Device Type,User Agent,SSL Cipher,SSL Protocol,Source Port,Edge Status Code,Origin Status Code,Referer,Host,Request URI,RayID"
 $firstLine | Add-Content -Path $CSVFile
 
 # Enforce TLS1.2 (Cloudflare requires this)
@@ -301,7 +308,7 @@ $firstLine | Add-Content -Path $CSVFile
 
 # Grab the respective hour from the API
 $headers = Set-HTTPHeaders
-$response = Invoke-WebRequest -Uri "https://api.cloudflare.com/client/v4/zones/$($zone)/logs/received?start=$($startDate)&end=$($endDate)&fields=ClientASN,ClientCountry,ClientDeviceType,ClientIP,ClientIPClass,ClientRequestUserAgent,ClientSSLCipher,ClientSSLProtocol,ClientSrcPort,ClientRequestURI,OriginResponseStatus,ClientRequestReferer,ClientRequestHost,EdgeStartTimestamp,EdgeResponseStatus&timestamps=rfc3339" -Headers $headers
+$response = Invoke-WebRequest -Uri "https://api.cloudflare.com/client/v4/zones/$($zone)/logs/received?start=$($startDate)&end=$($endDate)&fields=ClientASN,ClientCountry,ClientDeviceType,ClientIP,ClientIPClass,ClientRequestUserAgent,ClientSSLCipher,ClientSSLProtocol,ClientSrcPort,ClientRequestURI,OriginResponseStatus,ClientRequestReferer,ClientRequestHost,EdgeStartTimestamp,EdgeResponseStatus,RayID&timestamps=rfc3339" -Headers $headers
 
 # Take the big blob of data and format it into single lines
 $linePerEntry = ($response.content -Split '[\r\n]')
@@ -327,22 +334,23 @@ foreach ($line in $linePerEntry) {
     # Ignore any of the ASNs and/or User-Agents that we defined to ignore above
     if ($allowedASNs -NotContains $ClientASN -And $ClientRequestUserAgent -NotContains $allowedUserAgents) {
         # Get rid of any commas which will causes incorrect columning in a CSV
-        $ClientIP = $CSVData.ClientIP -Replace ',', ''
-        $ClientIPClass = $CSVData.ClientIPClass -Replace ',', ''
-        $ClientCountry = $CSVData.ClientCountry -Replace ',', ''
+        $ClientIP = $CSVData.ClientIP
+        $ClientIPClass = $CSVData.ClientIPClass
+        $ClientCountry = $CSVData.ClientCountry
         $ClientDeviceType = $CSVData.ClientDeviceType -Replace ',', ''
-        $ClientSSLCipher = $CSVData.ClientSSLCipher -Replace ',', ''
-        $ClientSSLProtocol = $CSVData.ClientSSLProtocol -Replace ',', ''
-        $ClientSrcPort = $CSVData.ClientSrcPort -Replace ',', ''
+        $ClientSSLCipher = $CSVData.ClientSSLCipher
+        $ClientSSLProtocol = $CSVData.ClientSSLProtocol
+        $ClientSrcPort = $CSVData.ClientSrcPort
         $ClientRequestURI = $CSVData.ClientRequestURI -Replace ',', ''
-        $OriginResponseStatus = $CSVData.OriginResponseStatus -Replace ',', ''
+        $OriginResponseStatus = $CSVData.OriginResponseStatus
         $ClientRequestReferer = $CSVData.ClientRequestReferer -Replace ',', ''
-        $ClientRequestHost = $CSVData.ClientRequestHost -Replace ',', ''
-        $EdgeStartTimestamp = $CSVData.EdgeStartTimestamp -Replace ',', ''
-        $EdgeResponseStatus = $CSVData.EdgeResponseStatus -Replace ',', ''
+        $ClientRequestHost = $CSVData.ClientRequestHost
+        $EdgeStartTimestamp = $CSVData.EdgeStartTimestamp
+        $EdgeResponseStatus = $CSVData.EdgeResponseStatus
+        $RayID = $CSVData.RayID
     
         # Define what a new line looks like by setting the column headers
-        $newLine = "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14}" -f $EdgeStartTimestamp, $ClientASN, $ClientIP, $ClientIPClass, $ClientCountry, $ClientDeviceType, $ClientRequestUserAgent, $ClientSSLCipher, $ClientSSLProtocol, $ClientSrcPort, $EdgeResponseStatus, $OriginResponseStatus, $ClientRequestReferer, $ClientRequestHost, $ClientRequestURI
+        $newLine = "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15}" -f $EdgeStartTimestamp, $ClientASN, $ClientIP, $ClientIPClass, $ClientCountry, $ClientDeviceType, $ClientRequestUserAgent, $ClientSSLCipher, $ClientSSLProtocol, $ClientSrcPort, $EdgeResponseStatus, $OriginResponseStatus, $ClientRequestReferer, $ClientRequestHost, $ClientRequestURI, $RayID
     
         # Write the line to the file
         $newLine | Add-Content -Path $CSVFile
